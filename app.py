@@ -3,152 +3,91 @@ import streamlit as st
 import pandas as pd
 import joblib
 
-# --------------------------------
-# 1. LOAD TRAINED MODEL AND SCALER
-# --------------------------------
-
+# Load saved model and scaler
 model = joblib.load("machine_failure_model.pkl")
 scaler = joblib.load("scaler.pkl")
 
 st.set_page_config(
     page_title="Machine Failure Prediction",
-    page_icon="⚙️",
-    layout="centered"
+    page_icon="⚙️"
 )
-
-# --------------------------------
-# 2. PAGE TITLE
-# --------------------------------
 
 st.title("Industrial Machine Failure Prediction")
-st.write(
-    "Predict possible machine failure using machine operating parameters."
+st.write("Enter the machine operating parameters.")
+
+# Machine inputs
+machine_type = st.selectbox("Machine Type", ["L", "M", "H"])
+air_temp = st.number_input("Air Temperature [K]", value=298.5)
+process_temp = st.number_input("Process Temperature [K]", value=308.7)
+speed = st.number_input("Rotational Speed [rpm]", value=1500)
+torque = st.number_input("Torque [Nm]", value=40.0)
+tool_wear = st.number_input("Tool Wear [min]", value=100)
+
+st.subheader("Failure Mode Indicators")
+st.caption(
+    "Set these to 1 only when the corresponding failure mode "
+    "is already known. For a normal-input demonstration, leave them at 0."
 )
 
-st.info(
-    "Enter the operating conditions below and click Predict."
-)
+twf = st.selectbox("Tool Wear Failure (TWF)", [0, 1])
+hdf = st.selectbox("Heat Dissipation Failure (HDF)", [0, 1])
+pwf = st.selectbox("Power Failure (PWF)", [0, 1])
+osf = st.selectbox("Overstrain Failure (OSF)", [0, 1])
+rnf = st.selectbox("Random Failure (RNF)", [0, 1])
 
-# --------------------------------
-# 3. INPUT PARAMETERS
-# --------------------------------
+if st.button("Predict Machine Failure"):
 
-machine_type = st.selectbox(
-    "Machine Type",
-    ["L", "M", "H"]
-)
-
-air_temp = st.number_input(
-    "Air Temperature (K)",
-    min_value=250.0,
-    max_value=350.0,
-    value=298.5
-)
-
-process_temp = st.number_input(
-    "Process Temperature (K)",
-    min_value=250.0,
-    max_value=400.0,
-    value=308.7
-)
-
-speed = st.number_input(
-    "Rotational Speed (rpm)",
-    min_value=0,
-    max_value=5000,
-    value=1500
-)
-
-torque = st.number_input(
-    "Torque (Nm)",
-    min_value=0.0,
-    max_value=200.0,
-    value=40.0
-)
-
-tool_wear = st.number_input(
-    "Tool Wear (min)",
-    min_value=0,
-    max_value=300,
-    value=100
-)
-
-# --------------------------------
-# 4. PREDICTION
-# --------------------------------
-
-if st.button("Predict Machine Failure", type="primary"):
-
-    # Encode machine type
     type_value = {"L": 0, "M": 1, "H": 2}[machine_type]
 
-    # Create input using the feature names
-    # and exact feature order from the trained model
-    feature_values = {
-        "Type": type_value,
-        "Air temperature [K]": air_temp,
-        "Process temperature [K]": process_temp,
-        "Rotational speed [rpm]": speed,
-        "Torque [Nm]": torque,
-        "Tool wear [min]": tool_wear
-    }
+    # Exact feature names and order expected by the model
+    input_data = pd.DataFrame([[
+        type_value,
+        air_temp,
+        process_temp,
+        speed,
+        torque,
+        tool_wear,
+        twf,
+        hdf,
+        pwf,
+        osf,
+        rnf
+    ]], columns=[
+        "Type",
+        "Air temperature [K]",
+        "Process temperature [K]",
+        "Rotational speed [rpm]",
+        "Torque [Nm]",
+        "Tool wear [min]",
+        "TWF",
+        "HDF",
+        "PWF",
+        "OSF",
+        "RNF"
+    ])
 
-    expected_features = list(model.feature_names_in_)
+    # Apply scaling only for models trained on scaled features
+    model_name = model.__class__.__name__
 
-    missing_features = [
-        feature for feature in expected_features
-        if feature not in feature_values
-    ]
-
-    if missing_features:
-        st.error(
-            "The model expects additional or differently named features: "
-            + ", ".join(missing_features)
-        )
-        st.write("Expected feature order:", expected_features)
-
+    if model_name in ["LogisticRegression", "KNeighborsClassifier"]:
+        model_input = scaler.transform(input_data)
     else:
-        input_data = pd.DataFrame(
-            [[feature_values[f] for f in expected_features]],
-            columns=expected_features
-        )
+        model_input = input_data
 
-        # Scale only models trained using scaled data
-        model_name = type(model).__name__
+    prediction = model.predict(model_input)[0]
 
-        if model_name in [
-            "LogisticRegression",
-            "KNeighborsClassifier"
-        ]:
-            model_input = scaler.transform(input_data)
-        else:
-            model_input = input_data
+    st.subheader("Prediction Result")
 
-        # Generate prediction
-        prediction = model.predict(model_input)[0]
+    if prediction == 1:
+        st.error("Machine Failure Predicted")
+    else:
+        st.success("No Machine Failure Predicted")
 
-        # Display result
-        st.subheader("Prediction Result")
+    if hasattr(model, "predict_proba"):
+        probability = model.predict_proba(model_input)[0][1]
+        st.metric("Model-estimated failure probability", f"{probability:.2%}")
 
-        if prediction == 1:
-            st.error("⚠️ Machine Failure Predicted")
-        else:
-            st.success("✅ No Machine Failure Predicted")
-
-        # Display estimated probability when supported
-        if hasattr(model, "predict_proba"):
-            probabilities = model.predict_proba(model_input)[0]
-            failure_probability = probabilities[
-                list(model.classes_).index(1)
-            ]
-
-            st.metric(
-                "Model-estimated Failure Probability",
-                f"{failure_probability:.2%}"
-            )
-
-        st.caption(
-            "Educational ML demonstration using the AI4I dataset. "
-            "This prediction is not a certified industrial safety system."
-        )
-
+    st.caption(
+        "Educational demonstration only. This model is not a certified "
+        "industrial safety or maintenance system."
+    )
